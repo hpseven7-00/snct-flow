@@ -1,84 +1,71 @@
 # SNCT Flow
 
-SNCT Flow é uma interface web desenvolvida para apoiar a gestão do fluxo de visitantes em eventos científicos, especialmente na Semana Nacional de Ciência e Tecnologia (SNCT). A aplicação apresenta um mapa das salas com indicadores de ocupação, ajudando monitores e organização a decidir rapidamente onde encaminhar grupos.
+O SNCT Flow apoia a gestão do fluxo de visitantes em eventos científicos, como a Semana Nacional de Ciência e Tecnologia. O dashboard mostra a ocupação por sala e permite registrar entradas e saídas de grupos e bloquear ou liberar ambientes.
 
-## Objetivo da TED 2
+## Arquitetura
 
-Implementar a interface da aplicação conforme o planejamento da TED 1, priorizando:
+- **Interface:** React, TypeScript, Vite e Tailwind CSS.
+- **API:** servidor HTTP nativo do Node.js com endpoints REST e payloads JSON.
+- **Persistência:** arquivo local `.data/rooms.json`, criado com dados de demonstração de [`server/seed-data.json`](./server/seed-data.json).
+- **Contrato da API:** OpenAPI 3 em [`docs/openapi.yaml`](./docs/openapi.yaml).
+- **Documento técnico TED 3:** [`docs/Documento-Tecnico-TED3.md`](./docs/Documento-Tecnico-TED3.md).
 
-- usabilidade;
-- responsividade;
-- acessibilidade;
-- organização visual das principais telas;
-- interação com o mapa de salas e movimentação de grupos.
-
-## Funcionalidades implementadas
-
-- dashboard de ocupação por sala;
-- indicação visual de status por cor e rótulo;
-- registro de entrada de grupos por tamanho;
-- registro de saída de grupos;
-- bloqueio ou liberação de sala;
-- exibição de apresentações por ambiente;
-- layout responsivo para celulares, tablets e computadores.
-
-## Tecnologias utilizadas
-
-- React
-- TypeScript
-- Vite
-- Tailwind CSS
+O arquivo JSON preserva as alterações após reiniciar a API. Esta arquitetura atende à demonstração local com uma instância; não é destinada a acesso público ou operação concorrente multiusuário. Autenticação não está implementada no MVP. A API escuta por padrão apenas em `127.0.0.1`.
 
 ## Requisitos
 
-- Node.js 18+
+- Node.js 20.19 ou superior
 - npm
 
-## Instalação
+## Instalação e execução
 
 ```bash
 npm install
 ```
 
-## Execução em ambiente de desenvolvimento
+Inicie a API em um terminal:
 
 ```bash
-npm run dev -- --host 0.0.0.0
+npm run api
 ```
 
-A aplicação estará disponível em:
-
-```text
-http://localhost:5173/
-```
-
-## Build de produção
+Inicie a interface em outro terminal:
 
 ```bash
+npm run dev
+```
+
+A aplicação estará em `http://localhost:5173`. O proxy de desenvolvimento encaminha as chamadas `/api` para `http://127.0.0.1:3001`.
+
+Configurações opcionais da API: `PORT` (padrão `3001`), `HOST` (padrão `127.0.0.1`) e `SNCT_DATA_FILE` (arquivo JSON alternativo).
+
+## API
+
+| Método | Endpoint | Descrição |
+|---|---|---|
+| `GET` | `/api/health` | Verificação de saúde |
+| `GET` | `/api/rooms` | Lista salas |
+| `GET` | `/api/rooms/{roomId}` | Consulta uma sala |
+| `POST` | `/api/rooms/{roomId}/groups` | Registra entrada (`{"size":"Pequeno"}`) |
+| `DELETE` | `/api/rooms/{roomId}/groups` | Registra saída do último grupo |
+| `PATCH` | `/api/rooms/{roomId}/availability` | Altera disponibilidade (`{"unavailable":true}`) |
+
+Consulte a especificação OpenAPI para schemas, respostas e exemplos.
+
+## Validação
+
+```bash
+npm test
+npm run lint
 npm run build
 ```
 
-## Fases da implementação
+Os testes usam o runner nativo `node:test` e não exigem serviços externos.
 
-### Fase 1 — Estrutura inicial
+## Evolução do projeto
 
-- criação do projeto com Vite + React + TypeScript;
-- definição do layout base e paleta visual;
-- estruturação do dashboard e do mapa das salas.
+- **TED 1:** planejamento inicial.
+- **TED 2:** interface responsiva, mapa de salas e interações com estado simulado no navegador.
+- **TED 3:** API, regras de negócio, persistência e integração com o dashboard.
 
-### Fase 2 — Interações e lógica da interface
-
-- seleção de sala;
-- cálculo de ocupação por capacidade e peso dos grupos;
-- ações de entrada, saída e indisponibilidade;
-- atualização visual em tempo real local.
-
-### Fase 3 — Revisão e documentação
-
-- ajustes de responsividade e acessibilidade;
-- validação do build;
-- organização do README e documentação técnica.
-
-## Observações
-
-A versão atual da TED 2 foca na interface front-end e usa dados simulados para reproduzir o comportamento esperado do MVP descrito no documento técnico da TED 1.
+O documento formal da TED 1 não estava presente no repositório recebido. Essa limitação e as informações anteriores disponíveis foram registradas no documento técnico da TED 3.

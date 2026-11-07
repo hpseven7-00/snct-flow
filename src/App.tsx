@@ -1,22 +1,11 @@
-import { useMemo, useState } from 'react'
-
-type GroupSize = 'Pequeno' | 'Médio' | 'Grande' | 'Muito grande'
-
-type GroupEntry = {
-  id: string
-  size: GroupSize
-  enteredAt: string
-}
-
-type Room = {
-  id: string
-  name: string
-  local: string
-  capacity: number
-  unavailable: boolean
-  groups: GroupEntry[]
-  presentations: string[]
-}
+import { useEffect, useMemo, useState } from 'react'
+import {
+  createGroup,
+  fetchRooms,
+  removeLastGroup as removeGroupFromApi,
+  updateRoomAvailability,
+} from './api'
+import type { GroupSize, Room } from './api'
 
 const GROUP_WEIGHTS: Record<GroupSize, number> = {
   Pequeno: 5,
@@ -24,70 +13,6 @@ const GROUP_WEIGHTS: Record<GroupSize, number> = {
   Grande: 25,
   'Muito grande': 40,
 }
-
-const INITIAL_ROOMS: Room[] = [
-  {
-    id: 'sala-a',
-    name: 'Sala A',
-    local: 'Bloco 01',
-    capacity: 40,
-    unavailable: false,
-    groups: [
-      { id: 'g1', size: 'Pequeno', enteredAt: '08:10' },
-      { id: 'g2', size: 'Médio', enteredAt: '08:35' },
-    ],
-    presentations: ['Robótica', 'Química aplicada'],
-  },
-  {
-    id: 'sala-b',
-    name: 'Sala B',
-    local: 'Bloco 01',
-    capacity: 60,
-    unavailable: false,
-    groups: [{ id: 'g3', size: 'Grande', enteredAt: '08:20' }],
-    presentations: ['Biologia', 'Saúde'],
-  },
-  {
-    id: 'sala-c',
-    name: 'Sala C',
-    local: 'Bloco 02',
-    capacity: 50,
-    unavailable: false,
-    groups: [
-      { id: 'g4', size: 'Pequeno', enteredAt: '08:15' },
-      { id: 'g5', size: 'Médio', enteredAt: '08:50' },
-      { id: 'g6', size: 'Médio', enteredAt: '09:00' },
-    ],
-    presentations: ['Tecnologia', 'Engenharia'],
-  },
-  {
-    id: 'sala-d',
-    name: 'Sala D',
-    local: 'Bloco 02',
-    capacity: 30,
-    unavailable: false,
-    groups: [{ id: 'g7', size: 'Muito grande', enteredAt: '08:45' }],
-    presentations: ['Astronomia'],
-  },
-  {
-    id: 'sala-e',
-    name: 'Sala E',
-    local: 'Bloco 03',
-    capacity: 45,
-    unavailable: true,
-    groups: [],
-    presentations: ['Sustentabilidade'],
-  },
-  {
-    id: 'sala-f',
-    name: 'Sala F',
-    local: 'Bloco 03',
-    capacity: 55,
-    unavailable: false,
-    groups: [{ id: 'g8', size: 'Pequeno', enteredAt: '08:30' }],
-    presentations: ['Matemática', 'Geografia'],
-  },
-]
 
 const GROUP_ORDER: GroupSize[] = ['Pequeno', 'Médio', 'Grande', 'Muito grande']
 
@@ -142,16 +67,62 @@ function getStatus(room: Room) {
   }
 }
 
-function createGroupId() {
-  return `grupo-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
-}
-
 function App() {
-  const [rooms, setRooms] = useState(INITIAL_ROOMS)
-  const [selectedRoomId, setSelectedRoomId] = useState(INITIAL_ROOMS[0].id)
+  const [rooms, setRooms] = useState<Room[]>([])
+  const [selectedRoomId, setSelectedRoomId] = useState('')
+  const [loadError, setLoadError] = useState('')
+  const [actionError, setActionError] = useState('')
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
+
+  const loadRooms = async () => {
+    try {
+      const loadedRooms = await fetchRooms()
+      setRooms(loadedRooms)
+      setLoadError('')
+      setLastUpdatedAt(new Date())
+      setSelectedRoomId((current) =>
+        loadedRooms.some((room) => room.id === current)
+          ? current
+          : loadedRooms[0]?.id ?? '',
+      )
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Não foi possível carregar as salas.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    let active = true
+    void fetchRooms()
+      .then((loadedRooms) => {
+        if (!active) return
+        setRooms(loadedRooms)
+        setLoadError('')
+        setLastUpdatedAt(new Date())
+        setSelectedRoomId((current) =>
+          loadedRooms.some((room) => room.id === current)
+            ? current
+            : loadedRooms[0]?.id ?? '',
+        )
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setLoadError(error instanceof Error ? error.message : 'Não foi possível carregar as salas.')
+        }
+      })
+      .finally(() => {
+        if (active) setIsLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
 
   const selectedRoom =
-    rooms.find((room) => room.id === selectedRoomId) ?? rooms[0]
+    rooms.find((room) => room.id === selectedRoomId)
 
   const summary = useMemo(() => {
     const total = rooms.length
@@ -168,49 +139,39 @@ function App() {
     }
   }, [rooms])
 
-  const addGroup = (size: GroupSize) => {
-    setRooms((currentRooms) =>
-      currentRooms.map((room) =>
-        room.id === selectedRoomId
-          ? {
-              ...room,
-              groups: [
-                ...room.groups,
-                {
-                  id: createGroupId(),
-                  size,
-                  enteredAt: new Date().toLocaleTimeString('pt-BR', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  }),
-                },
-              ],
-            }
-          : room,
-      ),
-    )
+  const runAction = async (action: () => Promise<void>) => {
+    setIsSaving(true)
+    setActionError('')
+    try {
+      await action()
+      setRooms(await fetchRooms())
+      setLastUpdatedAt(new Date())
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Não foi possível salvar a alteração.')
+    } finally {
+      setIsSaving(false)
+    }
   }
 
-  const removeGroup = () => {
-    setRooms((currentRooms) =>
-      currentRooms.map((room) =>
-        room.id === selectedRoomId && room.groups.length > 0
-          ? {
-              ...room,
-              groups: room.groups.slice(0, -1),
-            }
-          : room,
-      ),
-    )
+  if (isLoading) {
+    return <main className="p-8 text-center text-slate-200">Carregando salas...</main>
   }
 
-  const toggleAvailability = () => {
-    setRooms((currentRooms) =>
-      currentRooms.map((room) =>
-        room.id === selectedRoomId
-          ? { ...room, unavailable: !room.unavailable }
-          : room,
-      ),
+  if (loadError || !selectedRoom) {
+    return (
+      <main className="mx-auto max-w-xl p-8 text-center text-slate-200">
+        <p role="alert">{loadError || 'Nenhuma sala está cadastrada.'}</p>
+        <button
+          type="button"
+          onClick={() => {
+            setIsLoading(true)
+            void loadRooms()
+          }}
+          className="mt-4 rounded-xl border border-slate-600 px-4 py-2"
+        >
+          Tentar novamente
+        </button>
+      </main>
     )
   }
 
@@ -229,7 +190,7 @@ function App() {
             </div>
             <div className="inline-flex items-center gap-2 self-start rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
               <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-              Atualizado às {new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+              Atualizado às {lastUpdatedAt?.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) ?? '--:--'}
             </div>
           </div>
         </div>
@@ -349,7 +310,10 @@ function App() {
               </div>
               <button
                 type="button"
-                onClick={toggleAvailability}
+                disabled={isSaving}
+                onClick={() => void runAction(() =>
+                  updateRoomAvailability(selectedRoom.id, !selectedRoom.unavailable),
+                )}
                 className={[
                   'rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em]',
                   selectedRoom.unavailable
@@ -424,12 +388,15 @@ function App() {
                 Registrar movimentação
               </p>
 
+              {actionError && <p className="mt-3 text-sm text-red-300" role="alert">{actionError}</p>}
+
               <div className="mt-3 grid grid-cols-2 gap-2">
                 {GROUP_ORDER.map((size) => (
                   <button
                     key={size}
                     type="button"
-                    onClick={() => addGroup(size)}
+                    disabled={isSaving || selectedRoom.unavailable}
+                    onClick={() => void runAction(() => createGroup(selectedRoom.id, size))}
                     className="rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm font-medium text-slate-100 hover:border-sky-400/60 hover:bg-sky-500/10"
                   >
                     {size}
@@ -440,14 +407,18 @@ function App() {
               <div className="mt-4 flex gap-3">
                 <button
                   type="button"
-                  onClick={removeGroup}
+                  disabled={isSaving || selectedRoom.groups.length === 0}
+                  onClick={() => void runAction(() => removeGroupFromApi(selectedRoom.id))}
                   className="flex-1 rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm font-semibold text-slate-100 hover:border-amber-400/60 hover:bg-amber-500/10"
                 >
                   Registrar saída
                 </button>
                 <button
                   type="button"
-                  onClick={toggleAvailability}
+                  disabled={isSaving}
+                  onClick={() => void runAction(() =>
+                    updateRoomAvailability(selectedRoom.id, !selectedRoom.unavailable),
+                  )}
                   className="flex-1 rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm font-semibold text-slate-100 hover:border-red-400/60 hover:bg-red-500/10"
                 >
                   {selectedRoom.unavailable ? 'Liberar' : 'Bloquear'}

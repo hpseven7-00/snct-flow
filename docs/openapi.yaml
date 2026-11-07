@@ -1,0 +1,198 @@
+openapi: 3.0.3
+info:
+  title: SNCT Flow API
+  version: 1.0.0
+  description: API local para consulta de salas e registro de movimentações.
+servers:
+  - url: http://127.0.0.1:3001
+paths:
+  /api/health:
+    get:
+      summary: Verifica a disponibilidade da API
+      responses:
+        '200':
+          description: API disponível
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                required: [status]
+  /api/rooms:
+    get:
+      summary: Lista as salas
+      responses:
+        '200':
+          description: Salas cadastradas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rooms:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Room'
+                required: [rooms]
+  /api/rooms/{roomId}:
+    parameters:
+      - $ref: '#/components/parameters/RoomId'
+    get:
+      summary: Consulta uma sala
+      responses:
+        '200':
+          description: Sala encontrada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  room:
+                    $ref: '#/components/schemas/Room'
+                required: [room]
+        '404':
+          $ref: '#/components/responses/Error'
+  /api/rooms/{roomId}/groups:
+    parameters:
+      - $ref: '#/components/parameters/RoomId'
+    post:
+      summary: Registra a entrada de um grupo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                size:
+                  $ref: '#/components/schemas/GroupSize'
+              required: [size]
+      responses:
+        '201':
+          description: Entrada registrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomsResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Registra a saída do último grupo da sala
+      responses:
+        '200':
+          description: Saída registrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomsResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /api/rooms/{roomId}/availability:
+    parameters:
+      - $ref: '#/components/parameters/RoomId'
+    patch:
+      summary: Altera a disponibilidade da sala
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                unavailable:
+                  type: boolean
+              required: [unavailable]
+      responses:
+        '200':
+          description: Disponibilidade atualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomsResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+components:
+  parameters:
+    RoomId:
+      name: roomId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: sala-a
+  schemas:
+    GroupSize:
+      type: string
+      enum: [Pequeno, Médio, Grande, Muito grande]
+    Group:
+      type: object
+      properties:
+        id:
+          type: string
+        size:
+          $ref: '#/components/schemas/GroupSize'
+        enteredAt:
+          type: string
+          example: '08:10'
+      required: [id, size, enteredAt]
+    Room:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        local:
+          type: string
+        capacity:
+          type: integer
+          minimum: 1
+        unavailable:
+          type: boolean
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/Group'
+        presentations:
+          type: array
+          items:
+            type: string
+      required: [id, name, local, capacity, unavailable, groups, presentations]
+    RoomsResponse:
+      type: object
+      properties:
+        rooms:
+          type: array
+          items:
+            $ref: '#/components/schemas/Room'
+      required: [rooms]
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+          required: [code, message]
+      required: [error]
+  responses:
+    Error:
+      description: Erro da requisição
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
