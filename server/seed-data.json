@@ -3,61 +3,42 @@
     "id": "sala-a",
     "name": "Sala A",
     "local": "Bloco 01",
-    "capacity": 40,
-    "unavailable": false,
-    "groups": [
-      { "id": "g1", "size": "Pequeno", "enteredAt": "08:10" },
-      { "id": "g2", "size": "Médio", "enteredAt": "08:35" }
-    ],
+    "status": "available",
     "presentations": ["Robótica", "Química aplicada"]
   },
   {
     "id": "sala-b",
     "name": "Sala B",
     "local": "Bloco 01",
-    "capacity": 60,
-    "unavailable": false,
-    "groups": [{ "id": "g3", "size": "Grande", "enteredAt": "08:20" }],
+    "status": "occupied",
     "presentations": ["Biologia", "Saúde"]
   },
   {
     "id": "sala-c",
     "name": "Sala C",
     "local": "Bloco 02",
-    "capacity": 50,
-    "unavailable": false,
-    "groups": [
-      { "id": "g4", "size": "Pequeno", "enteredAt": "08:15" },
-      { "id": "g5", "size": "Médio", "enteredAt": "08:50" },
-      { "id": "g6", "size": "Médio", "enteredAt": "09:00" }
-    ],
+    "status": "available",
     "presentations": ["Tecnologia", "Engenharia"]
   },
   {
     "id": "sala-d",
     "name": "Sala D",
     "local": "Bloco 02",
-    "capacity": 30,
-    "unavailable": false,
-    "groups": [{ "id": "g7", "size": "Muito grande", "enteredAt": "08:45" }],
+    "status": "occupied",
     "presentations": ["Astronomia"]
   },
   {
     "id": "sala-e",
     "name": "Sala E",
     "local": "Bloco 03",
-    "capacity": 45,
-    "unavailable": true,
-    "groups": [],
+    "status": "blocked",
     "presentations": ["Sustentabilidade"]
   },
   {
     "id": "sala-f",
     "name": "Sala F",
     "local": "Bloco 03",
-    "capacity": 55,
-    "unavailable": false,
-    "groups": [{ "id": "g8", "size": "Pequeno", "enteredAt": "08:30" }],
+    "status": "available",
     "presentations": ["Matemática", "Geografia"]
   }
 ]

@@ -1,69 +1,48 @@
 import { useEffect, useMemo, useState } from 'react'
-import {
-  createGroup,
-  fetchRooms,
-  removeLastGroup as removeGroupFromApi,
-  updateRoomAvailability,
-} from './api'
-import type { GroupSize, Room } from './api'
+import { fetchRooms, updateRoomStatus } from './api'
+import type { Room, RoomStatus } from './api'
+import './App.css'
 
-const GROUP_WEIGHTS: Record<GroupSize, number> = {
-  Pequeno: 5,
-  Médio: 10,
-  Grande: 25,
-  'Muito grande': 40,
+const ROOM_LAYOUT: Record<string, { left: number; top: number; width: number; height: number }> = {
+  'sala-a': { left: 4, top: 19, width: 26, height: 15 },
+  'sala-b': { left: 4, top: 38, width: 26, height: 15 },
+  'sala-c': { left: 34, top: 25, width: 24, height: 15 },
+  'sala-d': { left: 34, top: 44, width: 24, height: 15 },
+  'sala-e': { left: 76, top: 19, width: 21, height: 15 },
+  'sala-f': { left: 76, top: 38, width: 21, height: 15 },
 }
 
-const GROUP_ORDER: GroupSize[] = ['Pequeno', 'Médio', 'Grande', 'Muito grande']
-
-function calculateOccupancy(room: Room) {
-  const totalWeight = room.groups.reduce(
-    (sum, group) => sum + GROUP_WEIGHTS[group.size],
-    0,
-  )
-
-  return (totalWeight / room.capacity) * 100
+const STATUS_DETAILS: Record<RoomStatus, { label: string; color: string; badge: string }> = {
+  available: {
+    label: 'Disponível',
+    color: 'bg-emerald-400',
+    badge: 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200',
+  },
+  occupied: {
+    label: 'Ocupada',
+    color: 'bg-amber-400',
+    badge: 'border-amber-400/40 bg-amber-400/10 text-amber-200',
+  },
+  blocked: {
+    label: 'Bloqueada',
+    color: 'bg-slate-400',
+    badge: 'border-slate-400/40 bg-slate-400/10 text-slate-200',
+  },
 }
 
-function getStatus(room: Room) {
-  if (room.unavailable) {
-    return {
-      label: 'Indisponível',
-      badge: 'border-slate-500/70 bg-slate-500/15 text-slate-200',
-      fill: 'bg-slate-500',
-    }
-  }
+function currentTime() {
+  return new Date()
+}
 
-  const occupancy = calculateOccupancy(room)
-
-  if (occupancy < 25) {
-    return {
-      label: 'Disponível',
-      badge: 'border-emerald-400/60 bg-emerald-500/15 text-emerald-200',
-      fill: 'bg-emerald-500',
-    }
-  }
-
-  if (occupancy < 50) {
-    return {
-      label: 'Pouco ocupado',
-      badge: 'border-yellow-400/60 bg-yellow-500/15 text-yellow-200',
-      fill: 'bg-yellow-500',
-    }
-  }
-
-  if (occupancy < 75) {
-    return {
-      label: 'Ocupação média',
-      badge: 'border-orange-400/60 bg-orange-500/15 text-orange-200',
-      fill: 'bg-orange-500',
-    }
-  }
+function getRoomPosition(index: number) {
+  const column = index % 3
+  const row = Math.floor(index / 3)
 
   return {
-    label: 'Alta ocupação',
-    badge: 'border-red-400/60 bg-red-500/15 text-red-200',
-    fill: 'bg-red-500',
+    left: 4 + column * 31,
+    top: 19 + row * 19,
+    width: 26,
+    height: 15,
   }
 }
 
@@ -76,17 +55,22 @@ function App() {
   const [isSaving, setIsSaving] = useState(false)
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
 
+  const refreshRooms = async () => {
+    const updatedRooms = await fetchRooms()
+    setRooms(updatedRooms)
+    setLastUpdatedAt(currentTime())
+    setSelectedRoomId((current) =>
+      updatedRooms.some((room) => room.id === current)
+        ? current
+        : updatedRooms[0]?.id ?? '',
+    )
+  }
+
   const loadRooms = async () => {
+    setIsLoading(true)
+    setLoadError('')
     try {
-      const loadedRooms = await fetchRooms()
-      setRooms(loadedRooms)
-      setLoadError('')
-      setLastUpdatedAt(new Date())
-      setSelectedRoomId((current) =>
-        loadedRooms.some((room) => room.id === current)
-          ? current
-          : loadedRooms[0]?.id ?? '',
-      )
+      await refreshRooms()
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : 'Não foi possível carregar as salas.')
     } finally {
@@ -101,7 +85,7 @@ function App() {
         if (!active) return
         setRooms(loadedRooms)
         setLoadError('')
-        setLastUpdatedAt(new Date())
+        setLastUpdatedAt(currentTime())
         setSelectedRoomId((current) =>
           loadedRooms.some((room) => room.id === current)
             ? current
@@ -121,33 +105,28 @@ function App() {
     }
   }, [])
 
-  const selectedRoom =
-    rooms.find((room) => room.id === selectedRoomId)
+  const selectedRoom = rooms.find((room) => room.id === selectedRoomId)
 
-  const summary = useMemo(() => {
-    const total = rooms.length
-    const available = rooms.filter((room) => !room.unavailable).length
-    const occupied = rooms.filter((room) => {
-      const status = getStatus(room)
-      return !room.unavailable && status.label !== 'Disponível'
-    }).length
+  const summary = useMemo(
+    () => ({
+      total: rooms.length,
+      available: rooms.filter((room) => room.status === 'available').length,
+      occupied: rooms.filter((room) => room.status === 'occupied').length,
+      blocked: rooms.filter((room) => room.status === 'blocked').length,
+    }),
+    [rooms],
+  )
 
-    return {
-      total,
-      available,
-      occupied,
-    }
-  }, [rooms])
+  const runAction = async (status: RoomStatus) => {
+    if (!selectedRoom) return
 
-  const runAction = async (action: () => Promise<void>) => {
     setIsSaving(true)
     setActionError('')
     try {
-      await action()
-      setRooms(await fetchRooms())
-      setLastUpdatedAt(new Date())
+      await updateRoomStatus(selectedRoom.id, status)
+      await refreshRooms()
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'Não foi possível salvar a alteração.')
+      setActionError(error instanceof Error ? error.message : 'Não foi possível atualizar a sala.')
     } finally {
       setIsSaving(false)
     }
@@ -163,10 +142,7 @@ function App() {
         <p role="alert">{loadError || 'Nenhuma sala está cadastrada.'}</p>
         <button
           type="button"
-          onClick={() => {
-            setIsLoading(true)
-            void loadRooms()
-          }}
+          onClick={() => void loadRooms()}
           className="mt-4 rounded-xl border border-slate-600 px-4 py-2"
         >
           Tentar novamente
@@ -175,276 +151,218 @@ function App() {
     )
   }
 
+  const status = STATUS_DETAILS[selectedRoom.status]
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <header className="mx-auto max-w-7xl px-4 pb-6 pt-8 sm:px-6 lg:px-8">
-        <div className="flex flex-col gap-4 rounded-3xl border border-slate-800 bg-slate-900/80 p-5 shadow-soft backdrop-blur sm:p-6">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-sky-300">
-                SNCT Flow
-              </p>
-              <h1 className="mt-2 text-3xl font-bold text-white sm:text-4xl">
-                Dashboard de ocupação do evento
-              </h1>
-            </div>
-            <div className="inline-flex items-center gap-2 self-start rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-              Atualizado às {lastUpdatedAt?.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) ?? '--:--'}
-            </div>
+        <div className="flex flex-col gap-4 rounded-3xl border border-slate-800 bg-slate-900/80 p-5 shadow-soft backdrop-blur sm:flex-row sm:items-center sm:justify-between sm:p-6">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.28em] text-sky-300">
+              SNCT Flow
+            </p>
+            <h1 className="mt-2 text-3xl font-extrabold text-white sm:text-4xl">
+              Dashboard de ocupação do evento
+            </h1>
+          </div>
+          <div className="inline-flex items-center gap-2 self-start rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200 sm:self-center">
+            <span className="h-2 w-2 rounded-full bg-emerald-400" />
+            Ao vivo · atualizado às {lastUpdatedAt?.toLocaleTimeString('pt-BR', {
+              hour: '2-digit',
+              minute: '2-digit',
+            }) ?? '--:--'}
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-4 pb-12 sm:px-6 lg:px-8">
-        <section className="grid gap-4 md:grid-cols-3">
-          <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow-soft">
-            <p className="text-xs uppercase tracking-[0.24em] text-slate-400">
-              Total de salas
-            </p>
-            <div className="mt-3 flex items-end justify-between gap-2">
-              <span className="text-3xl font-bold text-white">{summary.total}</span>
-              <span className="text-sm text-slate-300">mapeadas</span>
-            </div>
-          </article>
-
-          <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow-soft">
-            <p className="text-xs uppercase tracking-[0.24em] text-slate-400">
-              Disponíveis
-            </p>
-            <div className="mt-3 flex items-end justify-between gap-2">
-              <span className="text-3xl font-bold text-emerald-300">{summary.available}</span>
-              <span className="text-sm text-slate-300">em uso</span>
-            </div>
-          </article>
-
-          <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow-soft">
-            <p className="text-xs uppercase tracking-[0.24em] text-slate-400">
-              Ocupação ativa
-            </p>
-            <div className="mt-3 flex items-end justify-between gap-2">
-              <span className="text-3xl font-bold text-amber-300">{summary.occupied}</span>
-              <span className="text-sm text-slate-300">salas monitoradas</span>
-            </div>
-          </article>
+      <main className="mx-auto max-w-7xl space-y-6 px-4 pb-12 sm:px-6 lg:px-8">
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Resumo das salas">
+          <SummaryCard label="Total de salas" value={summary.total} detail="mapeadas" color="text-white" />
+          <SummaryCard label="Disponíveis" value={summary.available} detail="prontas para receber" color="text-emerald-300" />
+          <SummaryCard label="Ocupadas" value={summary.occupied} detail="com visitantes" color="text-amber-300" />
+          <SummaryCard label="Bloqueadas" value={summary.blocked} detail="temporariamente fechadas" color="text-slate-300" />
         </section>
 
-        <section className="mt-8 grid gap-6 xl:grid-cols-[1.8fr_1fr]">
+        <section className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.8fr)_minmax(320px,0.9fr)]">
           <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-4 shadow-soft sm:p-6">
-            <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="mb-5 flex flex-col gap-4">
               <div>
-                <p className="text-xs uppercase tracking-[0.26em] text-sky-300">
-                  Mapa das salas
+                <p className="text-xs font-bold uppercase tracking-[0.26em] text-sky-300">
+                  Mapa do campus
                 </p>
-                <h2 className="mt-2 text-2xl font-bold text-white">Campus SNCT</h2>
+                <h2 className="mt-1 text-2xl font-extrabold text-white">Campus SNCT</h2>
               </div>
-              <div className="rounded-full border border-slate-700 bg-slate-950/80 px-3 py-1.5 text-xs text-slate-300">
-                Atualização em tempo real
-              </div>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {rooms.map((room) => {
-                const status = getStatus(room)
-                const occupancy = calculateOccupancy(room)
-                const isSelected = room.id === selectedRoomId
-
-                return (
-                  <button
-                    key={room.id}
-                    type="button"
-                    aria-pressed={isSelected}
-                    onClick={() => setSelectedRoomId(room.id)}
-                    className={[
-                      'rounded-2xl border p-4 text-left shadow-soft transition-all duration-200',
-                      isSelected
-                        ? 'border-sky-400/70 bg-sky-500/10 ring-2 ring-sky-400/40'
-                        : 'border-slate-700 bg-slate-950/60 hover:border-slate-500',
-                    ].join(' ')}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-lg font-semibold text-white">{room.name}</span>
-                      <span
-                        className={[
-                          'inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.2em]',
-                          status.badge,
-                        ].join(' ')}
-                      >
-                        {status.label}
-                      </span>
-                    </div>
-
-                    <div className="mt-4 flex items-end justify-between gap-2">
-                      <span className="text-3xl font-bold text-white">
-                        {Math.round(occupancy)}%
-                      </span>
-                      <span className="text-[10px] uppercase tracking-[0.22em] text-slate-400">
-                        ocupação
-                      </span>
-                    </div>
-
-                    <div className="mt-3 h-2.5 w-full overflow-hidden rounded-full bg-slate-800">
-                      <div
-                        className={['h-full rounded-full', status.fill].join(' ')}
-                        style={{ width: `${Math.min(occupancy, 100)}%` }}
-                      />
-                    </div>
-
-                    <div className="mt-4 flex items-center justify-between text-xs text-slate-300">
-                      <span>{room.groups.length} grupos</span>
-                      <span>{room.local}</span>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          <aside className="rounded-3xl border border-slate-800 bg-slate-900/80 p-5 shadow-soft">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xs uppercase tracking-[0.22em] text-sky-300">
-                  Sala selecionada
-                </p>
-                <h2 className="mt-2 text-2xl font-bold text-white">{selectedRoom.name}</h2>
-              </div>
-              <button
-                type="button"
-                disabled={isSaving}
-                onClick={() => void runAction(() =>
-                  updateRoomAvailability(selectedRoom.id, !selectedRoom.unavailable),
-                )}
-                className={[
-                  'rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em]',
-                  selectedRoom.unavailable
-                    ? 'border-emerald-400/60 bg-emerald-500/10 text-emerald-200'
-                    : 'border-slate-600 bg-slate-800 text-slate-200',
-                ].join(' ')}
-              >
-                {selectedRoom.unavailable ? 'Disponibilizar' : 'Indisponibilizar'}
-              </button>
-            </div>
-
-            <div className="mt-5 rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-slate-300">Status</span>
-                <span
-                  className={[
-                    'inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em]',
-                    getStatus(selectedRoom).badge,
-                  ].join(' ')}
-                >
-                  {getStatus(selectedRoom).label}
-                </span>
-              </div>
-
-              <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <p className="text-slate-400">Capacidade</p>
-                  <p className="mt-1 text-lg font-semibold text-white">
-                    {selectedRoom.capacity} pessoas
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-400">Ocupação</p>
-                  <p className="mt-1 text-lg font-semibold text-white">
-                    {Math.round(calculateOccupancy(selectedRoom))}%
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-6">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                Grupos presentes
-              </p>
-
-              {selectedRoom.groups.length === 0 ? (
-                <div className="mt-3 rounded-2xl border border-dashed border-slate-700 bg-slate-950/40 p-4 text-sm text-slate-400">
-                  Nenhum grupo registrado nesta sala.
-                </div>
-              ) : (
-                <ul className="mt-3 space-y-2">
-                  {selectedRoom.groups.map((group) => (
-                    <li
-                      key={group.id}
-                      className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-950/50 px-3 py-2 text-sm"
-                    >
-                      <div>
-                        <p className="font-medium text-white">{group.size}</p>
-                        <p className="text-xs text-slate-400">Entrada {group.enteredAt}</p>
-                      </div>
-                      <span className="rounded-full bg-sky-500/10 px-2 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-sky-200">
-                        {GROUP_WEIGHTS[group.size]} pts
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div className="mt-6">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                Registrar movimentação
-              </p>
-
-              {actionError && <p className="mt-3 text-sm text-red-300" role="alert">{actionError}</p>}
-
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                {GROUP_ORDER.map((size) => (
-                  <button
-                    key={size}
-                    type="button"
-                    disabled={isSaving || selectedRoom.unavailable}
-                    onClick={() => void runAction(() => createGroup(selectedRoom.id, size))}
-                    className="rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm font-medium text-slate-100 hover:border-sky-400/60 hover:bg-sky-500/10"
-                  >
-                    {size}
-                  </button>
-                ))}
-              </div>
-
-              <div className="mt-4 flex gap-3">
-                <button
-                  type="button"
-                  disabled={isSaving || selectedRoom.groups.length === 0}
-                  onClick={() => void runAction(() => removeGroupFromApi(selectedRoom.id))}
-                  className="flex-1 rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm font-semibold text-slate-100 hover:border-amber-400/60 hover:bg-amber-500/10"
-                >
-                  Registrar saída
-                </button>
-                <button
-                  type="button"
-                  disabled={isSaving}
-                  onClick={() => void runAction(() =>
-                    updateRoomAvailability(selectedRoom.id, !selectedRoom.unavailable),
-                  )}
-                  className="flex-1 rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm font-semibold text-slate-100 hover:border-red-400/60 hover:bg-red-500/10"
-                >
-                  {selectedRoom.unavailable ? 'Liberar' : 'Bloquear'}
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-6">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                Apresentações
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {selectedRoom.presentations.map((presentation) => (
-                  <span
-                    key={presentation}
-                    className="rounded-full border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-xs font-medium text-sky-100"
-                  >
-                    {presentation}
+              <div className="flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-300" aria-label="Legenda do mapa">
+                {(Object.keys(STATUS_DETAILS) as RoomStatus[]).map((roomStatus) => (
+                  <span key={roomStatus} className="inline-flex items-center gap-2">
+                    <span className={`h-3 w-5 rounded-full ${STATUS_DETAILS[roomStatus].color}`} />
+                    {STATUS_DETAILS[roomStatus].label}
                   </span>
                 ))}
               </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-2xl border border-slate-800">
+              <div className="campus-map relative min-w-[760px] overflow-hidden" style={{ aspectRatio: '1010 / 980' }}>
+                <div className="campus-path" style={{ left: '2.475%', top: '47.959%', width: '2.178%', height: '40.408%' }} />
+                <div className="campus-path campus-path-vertical-end" style={{ left: '73.168%', top: '0%', width: '2.178%', height: '51.122%' }} />
+                <div className="campus-path campus-path-horizontal" style={{ left: '46.535%', top: '36.837%', width: '52.277%', height: '2.245%' }} />
+                <div className="campus-path campus-path-diagonal" style={{ left: '42.775%', top: '22.449%', width: '32.767%', height: '2.245%' }} />
+
+                <MapBlock label="BLOCO 01" left={1.881} top={12.041} />
+                <MapBlock label="BLOCO 02" left={33.069} top={21.429} />
+                <MapBlock label="BLOCO 03" left={57.525} top={16.939} />
+                <MapBlock label="BLOCO 04" left={76.436} top={27.347} />
+
+                {rooms.map((room, index) => {
+                  const position = ROOM_LAYOUT[room.id] ?? getRoomPosition(index)
+                  const roomStatus = STATUS_DETAILS[room.status]
+                  const isSelected = room.id === selectedRoomId
+                  return (
+                    <button
+                      key={room.id}
+                      type="button"
+                      aria-pressed={isSelected}
+                      aria-label={`${room.name}, ${roomStatus.label}, ${room.local}`}
+                      onClick={() => {
+                        setSelectedRoomId(room.id)
+                        setActionError('')
+                      }}
+                      className={[
+                        'map-room absolute flex flex-col justify-between rounded-md border p-2.5 text-left shadow-lg transition sm:p-3',
+                        `map-room-${room.status}`,
+                        isSelected ? 'z-10 ring-2 ring-white ring-offset-2 ring-offset-slate-950' : '',
+                      ].join(' ')}
+                      style={{
+                        left: `${position.left}%`,
+                        top: `${position.top}%`,
+                        width: `${position.width}%`,
+                        height: `${position.height}%`,
+                      }}
+                    >
+                      <span className="text-sm font-extrabold text-white sm:text-base">{room.name}</span>
+                      <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-white/90 sm:text-xs">
+                        <span className={`h-2 w-2 rounded-full ${roomStatus.color}`} />
+                        {roomStatus.label}
+                      </span>
+                    </button>
+                  )
+                })}
+
+                <div className="campus-entry absolute flex items-center justify-center gap-2 rounded-md border px-3 text-xs font-extrabold text-white sm:text-sm">
+                  <span aria-hidden="true">⌖</span>
+                  Entrada principal
+                </div>
+              </div>
+            </div>
+            <p className="mt-4 text-sm text-slate-400">
+              Selecione uma sala no mapa para consultar ou atualizar o estado.
+            </p>
+          </div>
+
+          <aside className="rounded-3xl border border-slate-800 bg-slate-900/80 p-5 shadow-soft sm:p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.22em] text-sky-300">
+                  Sala selecionada
+                </p>
+                <h2 className="mt-1 text-3xl font-extrabold text-white">{selectedRoom.name}</h2>
+                <p className="mt-1 text-sm text-slate-400">{selectedRoom.local}</p>
+              </div>
+              <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold ${status.badge}`}>
+                <span className={`h-2 w-2 rounded-full ${status.color}`} />
+                {status.label}
+              </span>
+            </div>
+
+            <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+              <p className="text-sm font-semibold text-slate-400">Apresentações</p>
+              {selectedRoom.presentations.length > 0 ? (
+                <ul className="mt-3 flex flex-wrap gap-2">
+                  {selectedRoom.presentations.map((presentation) => (
+                    <li
+                      key={presentation}
+                      className="rounded-full border border-sky-500/30 bg-sky-500/10 px-3 py-1 text-xs font-medium text-sky-100"
+                    >
+                      {presentation}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-sm text-slate-400">Nenhuma apresentação cadastrada.</p>
+              )}
+            </div>
+
+            {actionError && (
+              <p className="mt-4 text-sm text-red-300" role="alert">{actionError}</p>
+            )}
+
+            <div className="mt-6 space-y-3">
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">
+                Movimentação
+              </p>
+              <button
+                type="button"
+                disabled={isSaving || selectedRoom.status !== 'available'}
+                onClick={() => void runAction('occupied')}
+                className="w-full rounded-xl border border-amber-400/50 bg-amber-400/10 px-4 py-3 text-sm font-bold text-amber-100 transition hover:bg-amber-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Registrar entrada · marcar ocupada
+              </button>
+              <button
+                type="button"
+                disabled={isSaving || selectedRoom.status !== 'occupied'}
+                onClick={() => void runAction('available')}
+                className="w-full rounded-xl border border-emerald-400/50 bg-emerald-400/10 px-4 py-3 text-sm font-bold text-emerald-100 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Registrar saída · liberar sala
+              </button>
+              <button
+                type="button"
+                disabled={isSaving}
+                onClick={() => void runAction(selectedRoom.status === 'blocked' ? 'available' : 'blocked')}
+                className="w-full rounded-xl border border-slate-500/60 bg-slate-700/40 px-4 py-3 text-sm font-bold text-slate-100 transition hover:bg-slate-700/70 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {selectedRoom.status === 'blocked' ? 'Desbloquear sala' : 'Bloquear sala'}
+              </button>
             </div>
           </aside>
         </section>
       </main>
     </div>
+  )
+}
+
+function SummaryCard({
+  label,
+  value,
+  detail,
+  color,
+}: {
+  label: string
+  value: number
+  detail: string
+  color: string
+}) {
+  return (
+    <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow-soft">
+      <p className="text-sm font-semibold text-slate-400">{label}</p>
+      <div className="mt-2 flex items-end justify-between gap-2">
+        <span className={`text-4xl font-extrabold tabular-nums ${color}`}>{value}</span>
+        <span className="text-right text-xs text-slate-400">{detail}</span>
+      </div>
+    </article>
+  )
+}
+
+function MapBlock({ label, left, top }: { label: string; left: number; top: number }) {
+  return (
+    <span
+      className="absolute text-[10px] font-extrabold tracking-[0.12em] text-slate-400 sm:text-xs"
+      style={{ left: `${left}%`, top: `${top}%` }}
+    >
+      {label}
+    </span>
   )
 }
 

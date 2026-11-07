@@ -1,11 +1,4 @@
-import { randomUUID } from 'node:crypto'
-
-export const GROUP_WEIGHTS = Object.freeze({
-  Pequeno: 5,
-  'Médio': 10,
-  Grande: 25,
-  'Muito grande': 40,
-})
+export const ROOM_STATUSES = Object.freeze(['available', 'occupied', 'blocked'])
 
 export class DomainError extends Error {
   constructor(status, code, message) {
@@ -23,50 +16,31 @@ function findRoom(rooms, roomId) {
   return room
 }
 
-export function addGroup(rooms, roomId, size) {
-  if (!Object.hasOwn(GROUP_WEIGHTS, size)) {
-    throw new DomainError(400, 'INVALID_GROUP_SIZE', 'Tamanho de grupo inválido.')
+export function setRoomStatus(rooms, roomId, status) {
+  if (!ROOM_STATUSES.includes(status)) {
+    throw new DomainError(400, 'INVALID_STATUS', 'Status de sala inválido.')
   }
 
   const room = findRoom(rooms, roomId)
-  if (room.unavailable) {
-    throw new DomainError(409, 'ROOM_UNAVAILABLE', 'A sala está indisponível.')
+  const allowedTransitions = {
+    available: ['occupied', 'blocked'],
+    occupied: ['available', 'blocked'],
+    blocked: ['available'],
   }
 
-  const group = {
-    id: randomUUID(),
-    size,
-    enteredAt: new Date().toLocaleTimeString('pt-BR', {
-      hour: '2-digit',
-      minute: '2-digit',
-    }),
+  if (room.status === status) {
+    return rooms
   }
 
-  return rooms.map((item) =>
-    item.id === roomId ? { ...item, groups: [...item.groups, group] } : item,
-  )
-}
-
-export function removeLastGroup(rooms, roomId) {
-  const room = findRoom(rooms, roomId)
-  if (room.groups.length === 0) {
-    throw new DomainError(409, 'NO_GROUPS_TO_REMOVE', 'Não há grupos registrados nesta sala.')
+  if (!allowedTransitions[room.status]?.includes(status)) {
+    throw new DomainError(
+      409,
+      'INVALID_STATUS_TRANSITION',
+      `Não é possível alterar uma sala ${room.status} para ${status}.`,
+    )
   }
 
   return rooms.map((item) =>
-    item.id === roomId
-      ? { ...item, groups: item.groups.slice(0, -1) }
-      : item,
-  )
-}
-
-export function setRoomAvailability(rooms, roomId, unavailable) {
-  if (typeof unavailable !== 'boolean') {
-    throw new DomainError(400, 'INVALID_AVAILABILITY', 'Informe indisponível como valor booleano.')
-  }
-
-  findRoom(rooms, roomId)
-  return rooms.map((item) =>
-    item.id === roomId ? { ...item, unavailable } : item,
+    item.id === roomId ? { ...item, status } : item,
   )
 }

@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { GROUP_WEIGHTS } from './domain.mjs'
+import { ROOM_STATUSES } from './domain.mjs'
 
 const seedPath = fileURLToPath(new URL('./seed-data.json', import.meta.url))
 const defaultDataPath = fileURLToPath(new URL('../.data/rooms.json', import.meta.url))
@@ -20,30 +20,34 @@ function validateRooms(rooms) {
       ids.has(room.id) ||
       typeof room.name !== 'string' ||
       typeof room.local !== 'string' ||
-      !Number.isFinite(room.capacity) ||
-      room.capacity <= 0 ||
-      typeof room.unavailable !== 'boolean' ||
-      !Array.isArray(room.groups) ||
+      !ROOM_STATUSES.includes(room.status) ||
       !Array.isArray(room.presentations)
     ) {
       throw new Error('O arquivo de dados contém uma sala inválida.')
     }
 
     ids.add(room.id)
-    const groupIds = new Set()
-    for (const group of room.groups) {
-      if (
-        !group ||
-        typeof group.id !== 'string' ||
-        !Object.hasOwn(GROUP_WEIGHTS, group.size) ||
-        groupIds.has(group.id) ||
-        typeof group.enteredAt !== 'string'
-      ) {
-        throw new Error(`O arquivo de dados contém um grupo inválido na sala ${room.id}.`)
-      }
-      groupIds.add(group.id)
-    }
   }
+}
+
+function migrateRooms(rooms) {
+  if (!Array.isArray(rooms)) return rooms
+
+  return rooms.map((room) => {
+    if (room.status) return room
+
+    return {
+      id: room.id,
+      name: room.name,
+      local: room.local,
+      status: room.unavailable
+        ? 'blocked'
+        : room.groups?.length
+          ? 'occupied'
+          : 'available',
+      presentations: room.presentations,
+    }
+  })
 }
 
 export class RoomStore {
@@ -56,8 +60,11 @@ export class RoomStore {
   }
 
   async initialize() {
+    let needsMigration = false
     try {
-      this.#rooms = JSON.parse(await readFile(this.#dataPath, 'utf8'))
+      const savedRooms = JSON.parse(await readFile(this.#dataPath, 'utf8'))
+      needsMigration = Array.isArray(savedRooms) && savedRooms.some((room) => !room.status)
+      this.#rooms = migrateRooms(savedRooms)
     } catch (error) {
       if (error.code !== 'ENOENT') {
         throw new Error(`Não foi possível carregar os dados de salas: ${error.message}`, {
@@ -65,11 +72,14 @@ export class RoomStore {
         })
       }
 
-      this.#rooms = JSON.parse(await readFile(seedPath, 'utf8'))
+      this.#rooms = migrateRooms(JSON.parse(await readFile(seedPath, 'utf8')))
       await this.#persist(this.#rooms)
     }
 
     validateRooms(this.#rooms)
+    if (needsMigration) {
+      await this.#persist(this.#rooms)
+    }
     return this
   }
 

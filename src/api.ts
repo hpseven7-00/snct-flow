@@ -1,18 +1,10 @@
-export type GroupSize = 'Pequeno' | 'Médio' | 'Grande' | 'Muito grande'
-
-export type GroupEntry = {
-  id: string
-  size: GroupSize
-  enteredAt: string
-}
+export type RoomStatus = 'available' | 'occupied' | 'blocked'
 
 export type Room = {
   id: string
   name: string
   local: string
-  capacity: number
-  unavailable: boolean
-  groups: GroupEntry[]
+  status: RoomStatus
   presentations: string[]
 }
 
@@ -44,25 +36,12 @@ export async function fetchRooms(): Promise<Room[]> {
   return payload.rooms
 }
 
-export async function createGroup(roomId: string, size: GroupSize): Promise<void> {
-  await request(`/api/rooms/${encodeURIComponent(roomId)}/groups`, {
-    method: 'POST',
-    body: JSON.stringify({ size }),
-  })
-}
-
-export async function removeLastGroup(roomId: string): Promise<void> {
-  await request(`/api/rooms/${encodeURIComponent(roomId)}/groups`, {
-    method: 'DELETE',
-  })
-}
-
-export async function updateRoomAvailability(
+export async function updateRoomStatus(
   roomId: string,
-  unavailable: boolean,
+  status: RoomStatus,
 ): Promise<void> {
-  await request(`/api/rooms/${encodeURIComponent(roomId)}/availability`, {
+  await request(`/api/rooms/${encodeURIComponent(roomId)}/status`, {
     method: 'PATCH',
-    body: JSON.stringify({ unavailable }),
+    body: JSON.stringify({ status }),
   })
 }

@@ -60,6 +60,8 @@ O planejamento formal da TED 1 não foi disponibilizado neste repositório, ent�
 
 Para este MVP foi adotado JSON local em vez de banco de dados externo, evitando infraestrutura e dependências adicionais e mantendo os dados entre reinicializações. A camada usa apenas módulos nativos do Node.js. Esta decisão é intencionalmente limitada a uma execução local e não substitui uma solução multiusuário em produção.
 
+Nesta evolução, a grade de cartões foi substituída por um mapa interativo do campus inspirado no protótipo fornecido, com proporção da planta de 1010 × 980. O mapa mostra cada sala na localização visual de seu bloco e usa cores para Disponível, Ocupada e Bloqueada. Um único botão alterna a sala entre bloqueada e desbloqueada.
+
 ## 3. Modelagem dos dados
 
 O arquivo `.data/rooms.json` contém uma lista de objetos `Room`:
@@ -69,19 +71,18 @@ O arquivo `.data/rooms.json` contém uma lista de objetos `Room`:
 | `id` | string | Identificador único da sala |
 | `name` | string | Nome de exibição |
 | `local` | string | Bloco ou localização |
-| `capacity` | número positivo | Capacidade de referência em pessoas |
-| `unavailable` | boolean | Indica bloqueio temporário |
-| `groups` | lista de `Group` | Grupos atualmente registrados na sala |
+| `status` | enum | `available`, `occupied` ou `blocked` |
 | `presentations` | lista de strings | Atividades previstas para a sala |
 
-Cada `Group` possui `id`, `size` e `enteredAt`. Os tamanhos válidos e seus pesos de ocupação são: Pequeno (5), Médio (10), Grande (25) e Muito grande (40). O percentual de ocupação é calculado como soma dos pesos dividida pela capacidade. A capacidade é usada como referência visual: o MVP não impede entradas que ultrapassem 100%, preservando o comportamento anterior.
+Entradas e saídas não criam registros de grupo nem calculam quantidade de pessoas. O estado atual da sala é a única informação de movimentação persistida.
 
 ## 4. Funcionalidades e regras de negócio
 
 - Consultar todas as salas ou uma sala por identificador.
-- Registrar entrada somente com um dos quatro tamanhos permitidos e em sala disponível.
-- Registrar saída removendo o último grupo; uma sala vazia resulta em conflito `409`.
-- Alterar disponibilidade usando valor booleano.
+- Registrar entrada altera uma sala `available` para `occupied`.
+- Registrar saída altera uma sala `occupied` para `available`.
+- Bloquear altera uma sala `available` ou `occupied` para `blocked`; desbloquear altera `blocked` para `available`.
+- A API rejeita transições incompatíveis (por exemplo, registrar entrada em sala bloqueada) com conflito `409`. Repetir o status atual é idempotente.
 - Retornar erros JSON com código e mensagem; requisições inválidas recebem `400`, recursos ausentes `404`, conflitos de regra `409` e corpos maiores que 16 KiB `413`.
 - Serializar gravações na instância da API e somente atualizar o estado em memória após persistência bem-sucedida.
 
@@ -91,18 +92,18 @@ Esta versão não implementa autenticação ou papéis de usuário: o MVP destin
 
 ## 6. Integração e endpoints
 
-A interface inicializa consultando `GET /api/rooms`. Ações de entrada, saída e disponibilidade são enviadas à API; após sucesso, a interface consulta novamente os dados persistidos. Falhas são apresentadas na própria interface e não são tratadas como sucesso.
+A interface inicializa consultando `GET /api/rooms`. Entrada, saída, bloqueio e desbloqueio são enviados à API; após sucesso, a interface consulta novamente os dados persistidos. Falhas são apresentadas na própria interface e não são tratadas como sucesso.
 
 | Método | Endpoint | Finalidade |
 |---|---|---|
 | `GET` | `/api/health` | Verificar disponibilidade |
 | `GET` | `/api/rooms` | Listar salas |
 | `GET` | `/api/rooms/{roomId}` | Consultar sala |
-| `POST` | `/api/rooms/{roomId}/groups` | Registrar entrada; corpo `{"size":"Pequeno"}` |
-| `DELETE` | `/api/rooms/{roomId}/groups` | Registrar saída do último grupo |
-| `PATCH` | `/api/rooms/{roomId}/availability` | Alterar disponibilidade; corpo `{"unavailable":true}` |
+| `PATCH` | `/api/rooms/{roomId}/status` | Registrar entrada, saída, bloqueio ou liberação; corpo `{"status":"occupied"}` |
 
 A especificação OpenAPI 3 está em [`openapi.yaml`](./openapi.yaml).
+
+Na primeira inicialização após esta atualização, dados persistidos no formato anterior são migrados automaticamente: salas indisponíveis tornam-se `blocked`; salas restantes com grupos registrados tornam-se `occupied`; salas vazias tornam-se `available`. O arquivo local é então regravado no novo formato, removendo os dados de quantidade e tamanho dos grupos, que deixaram de fazer parte das regras.
 
 ## 7. Instalação e execução
 
@@ -136,9 +137,9 @@ npm run lint
 npm run build
 ```
 
-Os testes automatizados verificam regras de entrada/saída e disponibilidade, validação de payload, respostas HTTP, persistência após reinicialização do repositório e erros de entrada.
+Os testes automatizados verificam as transições de estado, migração dos dados da versão anterior, validação de payload, respostas HTTP, persistência após reinicialização do repositório e erros de entrada.
 
-**Resultados desta implementação:** `npm test` — 6 testes aprovados; `npm run lint` — aprovado sem avisos; `npm run build` — compilação TypeScript e build Vite aprovados.
+**Resultados desta implementação:** `npm test` — 7 testes aprovados; `npm run lint` — aprovado sem avisos; `npm run build` — compilação TypeScript e build Vite aprovados.
 
 ## 9. Dificuldades e soluções
 
@@ -153,3 +154,4 @@ Os testes automatizados verificam regras de entrada/saída e disponibilidade, va
 | 1.0 | TED 1 | Planejamento inicial; documento formal não localizado no repositório recebido. |
 | 2.0 | TED 2 | Interface responsiva, dashboard e interações locais com dados simulados, conforme README existente. |
 | 3.0 | TED 3 | API REST Node.js, regras de domínio, persistência JSON, integração com React, testes e especificação OpenAPI. |
+| 3.1 | Ajuste da TED 3 | Mapa interativo do campus e estados simples disponível/ocupado/bloqueado, com migração dos dados existentes. |

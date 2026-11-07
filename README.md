@@ -1,16 +1,16 @@
 # SNCT Flow
 
-O SNCT Flow apoia a gestão do fluxo de visitantes em eventos científicos, como a Semana Nacional de Ciência e Tecnologia. O dashboard mostra a ocupação por sala e permite registrar entradas e saídas de grupos e bloquear ou liberar ambientes.
+O SNCT Flow apoia a gestão do fluxo de visitantes em eventos científicos, como a Semana Nacional de Ciência e Tecnologia. O dashboard exibe um mapa interativo do campus com o estado de cada sala: disponível, ocupada ou bloqueada.
 
 ## Arquitetura
 
 - **Interface:** React, TypeScript, Vite e Tailwind CSS.
 - **API:** servidor HTTP nativo do Node.js com endpoints REST e payloads JSON.
-- **Persistência:** arquivo local `.data/rooms.json`, criado com dados de demonstração de [`server/seed-data.json`](./server/seed-data.json).
+- **Persistência:** arquivo local `.data/rooms.json`, criado com dados de demonstração de [`server/seed-data.json`](./server/seed-data.json). Dados da versão anterior são migrados automaticamente para os três estados.
 - **Contrato da API:** OpenAPI 3 em [`docs/openapi.yaml`](./docs/openapi.yaml).
 - **Documento técnico TED 3:** [`docs/Documento-Tecnico-TED3.md`](./docs/Documento-Tecnico-TED3.md).
 
-O arquivo JSON preserva as alterações após reiniciar a API. Esta arquitetura atende à demonstração local com uma instância; não é destinada a acesso público ou operação concorrente multiusuário. Autenticação não está implementada no MVP. A API escuta por padrão apenas em `127.0.0.1`.
+O arquivo JSON preserva as alterações após reiniciar a API. Entrada muda uma sala disponível para ocupada; saída libera uma sala ocupada; um único botão alterna entre bloquear e desbloquear. Não é mantida contagem ou categoria de grupos. Esta arquitetura atende à demonstração local com uma instância; não é destinada a acesso público ou operação concorrente multiusuário. Autenticação não está implementada no MVP. A API escuta por padrão apenas em `127.0.0.1`.
 
 ## Requisitos
 
@@ -46,9 +46,7 @@ Configurações opcionais da API: `PORT` (padrão `3001`), `HOST` (padrão `127.
 | `GET` | `/api/health` | Verificação de saúde |
 | `GET` | `/api/rooms` | Lista salas |
 | `GET` | `/api/rooms/{roomId}` | Consulta uma sala |
-| `POST` | `/api/rooms/{roomId}/groups` | Registra entrada (`{"size":"Pequeno"}`) |
-| `DELETE` | `/api/rooms/{roomId}/groups` | Registra saída do último grupo |
-| `PATCH` | `/api/rooms/{roomId}/availability` | Altera disponibilidade (`{"unavailable":true}`) |
+| `PATCH` | `/api/rooms/{roomId}/status` | Atualiza estado (`{"status":"occupied"}`) |
 
 Consulte a especificação OpenAPI para schemas, respostas e exemplos.
 

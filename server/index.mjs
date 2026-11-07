@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { addGroup, DomainError, removeLastGroup, setRoomAvailability } from './domain.mjs'
+import { DomainError, setRoomStatus } from './domain.mjs'
 import { RoomStore } from './store.mjs'
 
 const rootPath = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -53,7 +53,7 @@ export function createApiServer(store) {
         return
       }
 
-      const roomMatch = pathname.match(/^\/api\/rooms\/([^/]+)(?:\/(groups|availability))?$/)
+      const roomMatch = pathname.match(/^\/api\/rooms\/([^/]+)(?:\/status)?$/)
       if (!roomMatch) {
         throw new DomainError(404, 'NOT_FOUND', 'Endpoint não encontrado.')
       }
@@ -64,9 +64,9 @@ export function createApiServer(store) {
       } catch {
         throw new DomainError(400, 'INVALID_ROOM_ID', 'Identificador de sala inválido.')
       }
-      const resource = roomMatch[2]
+      const isStatusResource = pathname.endsWith('/status')
 
-      if (request.method === 'GET' && !resource) {
+      if (request.method === 'GET' && !isStatusResource) {
         const room = store.listRooms().find((item) => item.id === roomId)
         if (!room) {
           throw new DomainError(404, 'ROOM_NOT_FOUND', 'Sala não encontrada.')
@@ -75,23 +75,10 @@ export function createApiServer(store) {
         return
       }
 
-      if (request.method === 'POST' && resource === 'groups') {
-        const body = await readJsonBody(request)
-        const rooms = await store.update((current) => addGroup(current, roomId, body?.size))
-        sendJson(response, 201, { rooms })
-        return
-      }
-
-      if (request.method === 'DELETE' && resource === 'groups') {
-        const rooms = await store.update((current) => removeLastGroup(current, roomId))
-        sendJson(response, 200, { rooms })
-        return
-      }
-
-      if (request.method === 'PATCH' && resource === 'availability') {
+      if (request.method === 'PATCH' && isStatusResource) {
         const body = await readJsonBody(request)
         const rooms = await store.update((current) =>
-          setRoomAvailability(current, roomId, body?.unavailable),
+          setRoomStatus(current, roomId, body?.status),
         )
         sendJson(response, 200, { rooms })
         return

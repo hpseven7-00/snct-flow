@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { createApiServer } from './index.mjs'
 import { RoomStore } from './store.mjs'
 
-const seedRooms = JSON.parse(await readFile(new URL('./seed-data.json', import.meta.url), 'utf8'))
+const seedRooms = JSON.parse(
+  await readFile(new URL('./seed-data.json', import.meta.url), 'utf8'),
+)
 
-test('API valida operações, persiste alterações e informa erros em JSON', async (context) => {
+test('API atualiza e persiste status e responde com erros consistentes', async (context) => {
   const directory = await mkdtemp(join(tmpdir(), 'snct-flow-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
 
@@ -26,58 +28,108 @@ test('API valida operações, persiste alterações e informa erros em JSON', as
   assert.deepEqual(await health.json(), { status: 'ok' })
 
   const initial = await fetch(`${baseUrl}/api/rooms`)
-  assert.equal((await initial.json()).rooms.length, seedRooms.length)
+  assert.deepEqual((await initial.json()).rooms, seedRooms)
 
-  const added = await fetch(`${baseUrl}/api/rooms/sala-a/groups`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ size: 'Pequeno' }),
-  })
-  assert.equal(added.status, 201)
-  const addedRooms = (await added.json()).rooms
-  assert.equal(addedRooms[0].groups.length, seedRooms[0].groups.length + 1)
-
-  const concurrentEntries = await Promise.all([
-    fetch(`${baseUrl}/api/rooms/sala-b/groups`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ size: 'Pequeno' }),
-    }),
-    fetch(`${baseUrl}/api/rooms/sala-b/groups`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ size: 'Médio' }),
-    }),
-  ])
-  assert.deepEqual(concurrentEntries.map((response) => response.status), [201, 201])
-  assert.equal(
-    store.listRooms().find((room) => room.id === 'sala-b').groups.length,
-    seedRooms[1].groups.length + 2,
-  )
-
-  const availability = await fetch(`${baseUrl}/api/rooms/sala-a/availability`, {
+  const occupied = await fetch(`${baseUrl}/api/rooms/sala-a/status`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ unavailable: true }),
+    body: JSON.stringify({ status: 'occupied' }),
   })
-  assert.equal((await availability.json()).rooms[0].unavailable, true)
+  assert.equal(occupied.status, 200)
+  assert.equal(
+    (await occupied.json()).rooms.find((room) => room.id === 'sala-a').status,
+    'occupied',
+  )
+
+  const blocked = await fetch(`${baseUrl}/api/rooms/sala-a/status`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ status: 'blocked' }),
+  })
+  assert.equal(
+    (await blocked.json()).rooms.find((room) => room.id === 'sala-a').status,
+    'blocked',
+  )
 
   const persistedStore = await new RoomStore(join(directory, 'rooms.json')).initialize()
-  assert.equal(persistedStore.listRooms()[0].unavailable, true)
+  assert.equal(persistedStore.listRooms()[0].status, 'blocked')
 
-  const invalid = await fetch(`${baseUrl}/api/rooms/sala-a/groups`, {
-    method: 'POST',
+  const invalidTransition = await fetch(`${baseUrl}/api/rooms/sala-a/status`, {
+    method: 'PATCH',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ size: 'Gigante' }),
+    body: JSON.stringify({ status: 'occupied' }),
+  })
+  assert.equal(invalidTransition.status, 409)
+  assert.equal(
+    (await invalidTransition.json()).error.code,
+    'INVALID_STATUS_TRANSITION',
+  )
+
+  const invalid = await fetch(`${baseUrl}/api/rooms/sala-a/status`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ status: 'full' }),
   })
   assert.equal(invalid.status, 400)
-  assert.equal((await invalid.json()).error.code, 'INVALID_GROUP_SIZE')
+  assert.equal((await invalid.json()).error.code, 'INVALID_STATUS')
 
-  const malformed = await fetch(`${baseUrl}/api/rooms/sala-a/groups`, {
-    method: 'POST',
+  const malformed = await fetch(`${baseUrl}/api/rooms/sala-a/status`, {
+    method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: '{',
   })
   assert.equal(malformed.status, 400)
   assert.equal((await malformed.json()).error.code, 'INVALID_JSON')
+})
+
+test('migra dados antigos de grupos e disponibilidade para status', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'snct-flow-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+
+  const dataPath = join(directory, 'rooms.json')
+  await writeFile(dataPath, JSON.stringify([
+    {
+      id: 'legacy-available',
+      name: 'Sala antiga livre',
+      local: 'Bloco 01',
+      capacity: 40,
+      unavailable: false,
+      groups: [],
+      presentations: [],
+    },
+    {
+      id: 'legacy-occupied',
+      name: 'Sala antiga ocupada',
+      local: 'Bloco 01',
+      capacity: 40,
+      unavailable: false,
+      groups: [{ id: 'g1', size: 'Pequeno', enteredAt: '08:00' }],
+      presentations: [],
+    },
+    {
+      id: 'legacy-blocked',
+      name: 'Sala antiga bloqueada',
+      local: 'Bloco 01',
+      capacity: 40,
+      unavailable: true,
+      groups: [],
+      presentations: [],
+    },
+  ]))
+
+  const store = await new RoomStore(dataPath).initialize()
+  assert.deepEqual(store.listRooms().map((room) => room.status), [
+    'available',
+    'occupied',
+    'blocked',
+  ])
+  assert.equal('groups' in store.listRooms()[1], false)
+  const persisted = JSON.parse(await readFile(dataPath, 'utf8'))
+  assert.deepEqual(persisted.map((room) => room.status), [
+    'available',
+    'occupied',
+    'blocked',
+  ])
+  assert.equal('groups' in persisted[1], false)
+  assert.equal('unavailable' in persisted[2], false)
 })
