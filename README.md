@@ -1,56 +1,104 @@
 # SNCT Flow
 
-O SNCT Flow apoia a gestão do fluxo de visitantes em eventos científicos, como a Semana Nacional de Ciência e Tecnologia. O dashboard exibe um mapa interativo do campus com o estado de cada sala: disponível, ocupada ou bloqueada.
+O SNCT Flow apoia a gestão do fluxo de visitantes em eventos científicos, como a Semana Nacional de Ciência e Tecnologia. Monitores veem o mesmo mapa de salas e registram entradas, saídas e bloqueios.
 
-## Arquitetura
+## Arquitetura para vários monitores
 
 - **Interface:** React, TypeScript, Vite e Tailwind CSS.
-- **API:** servidor HTTP nativo do Node.js com endpoints REST e payloads JSON.
-- **Persistência:** arquivo local `.data/rooms.json`, criado com dados de demonstração de [`server/seed-data.json`](./server/seed-data.json). Dados da versão anterior são migrados automaticamente para os três estados.
+- **API:** servidor HTTP Node.js com rotas REST no mesmo domínio da interface.
+- **Banco compartilhado:** PostgreSQL para salas, contas, tentativas de login e sessões.
+- **Autenticação:** contas individuais, sessão opaca em cookie `HttpOnly`, `SameSite=Strict`, senha derivada com `scrypt`; o coordenador cadastra contas de monitores.
+- **Sincronização:** a interface consulta as salas a cada 5 segundos e após cada alteração. Todos os monitores leem e atualizam o estado compartilhado no PostgreSQL.
+- **Mapa:** proporção 1010 × 980, com estado disponível, ocupado ou bloqueado.
 - **Contrato da API:** OpenAPI 3 em [`docs/openapi.yaml`](./docs/openapi.yaml).
-- **Documento técnico TED 3:** [`docs/Documento-Tecnico-TED3.md`](./docs/Documento-Tecnico-TED3.md).
+- **Documento técnico:** [`docs/Documento-Tecnico-TED3.md`](./docs/Documento-Tecnico-TED3.md).
 
-O arquivo JSON preserva as alterações após reiniciar a API. Entrada muda uma sala disponível para ocupada; saída libera uma sala ocupada; um único botão alterna entre bloquear e desbloquear. Não é mantida contagem ou categoria de grupos. Esta arquitetura atende à demonstração local com uma instância; não é destinada a acesso público ou operação concorrente multiusuário. Autenticação não está implementada no MVP. A API escuta por padrão apenas em `127.0.0.1`.
+O banco serializa as transições concorrentes por transação e bloqueio das salas, evitando que duas instâncias sobrescrevam mudanças independentes. Para uso público, publique atrás de HTTPS e configure `DATABASE_URL` por meio dos secrets do provedor. Não exponha a API sem TLS.
 
 ## Requisitos
 
 - Node.js 20.19 ou superior
 - npm
+- PostgreSQL 14 ou superior (local ou serviço gerenciado)
 
-## Instalação e execução
+## Configuração local
 
-```bash
+```powershell
 npm install
+Copy-Item .env.example .env
 ```
 
-Inicie a API em um terminal:
+Edite `.env` com a URL do PostgreSQL e defina a conta inicial do coordenador:
+
+```text
+DATABASE_URL=postgresql://usuario:senha@localhost:5432/snct_flow
+SNCT_ADMIN_USERNAME=coordenador
+SNCT_ADMIN_PASSWORD=<senha-com-pelo-menos-12-caracteres>
+```
+
+Crie no PostgreSQL o banco `snct_flow` e um usuário com permissão de criar/alterar as tabelas da aplicação. Os scripts de esquema são aplicados na inicialização; as salas de demonstração são inseridas somente se a tabela estiver vazia. Se existir `.data/rooms.json` da versão anterior, ela é importada uma vez para o banco e convertida para os três estados.
+
+Crie o primeiro coordenador (a operação falha se já houver um):
+
+```bash
+npm run create-admin
+```
+
+Não reutilize a senha de exemplo. Guarde credenciais e `DATABASE_URL` em variáveis de ambiente ou no gerenciador de secrets da hospedagem; não as envie ao Git.
+
+## Executar em desenvolvimento
+
+Terminal 1:
 
 ```bash
 npm run api
 ```
 
-Inicie a interface em outro terminal:
+Terminal 2:
 
 ```bash
 npm run dev
 ```
 
-A aplicação estará em `http://localhost:5173`. O proxy de desenvolvimento encaminha as chamadas `/api` para `http://127.0.0.1:3001`.
+Abra `http://localhost:5173`, entre com a conta do coordenador e cadastre usuários individuais para os monitores. O Vite encaminha `/api` à API local.
 
-Configurações opcionais da API: `PORT` (padrão `3001`), `HOST` (padrão `127.0.0.1`) e `SNCT_DATA_FILE` (arquivo JSON alternativo).
+## Publicar em produção
 
-## API
+Configure no provedor `DATABASE_URL`, `NODE_ENV=production` e `PORT` (além dos secrets exigidos pelo provedor PostgreSQL). Faça o build e inicie o servidor:
 
-| Método | Endpoint | Descrição |
+```bash
+npm ci
+npm run build
+npm start
+```
+
+Em produção o servidor atende o build e a API na mesma origem e escuta em `0.0.0.0` por padrão. O HTTPS deve ser terminado na plataforma ou em um proxy reverso confiável; configure o domínio para encaminhar à porta `PORT`. Execute `npm run create-admin` uma vez contra o banco de produção, com `SNCT_ADMIN_USERNAME` e `SNCT_ADMIN_PASSWORD` definidos como secrets. O serviço de aplicação precisa de acesso de rede ao PostgreSQL.
+
+## Regras dos estados
+
+- Entrada: `available` → `occupied`.
+- Saída: `occupied` → `available`.
+- Bloqueio: `available` ou `occupied` → `blocked`.
+- Desbloqueio: `blocked` → `available`.
+
+O estado repetido é idempotente; transições incompatíveis recebem `409`.
+
+## Endpoints
+
+| Método | Endpoint | Acesso |
 |---|---|---|
-| `GET` | `/api/health` | Verificação de saúde |
-| `GET` | `/api/rooms` | Lista salas |
-| `GET` | `/api/rooms/{roomId}` | Consulta uma sala |
-| `PATCH` | `/api/rooms/{roomId}/status` | Atualiza estado (`{"status":"occupied"}`) |
+| `GET` | `/api/health` | Público |
+| `POST` | `/api/auth/login` | Público |
+| `GET` | `/api/auth/me` | Autenticado |
+| `POST` | `/api/auth/logout` | Sessão atual |
+| `POST` | `/api/users` | Coordenador |
+| `GET` | `/api/rooms` | Monitor ou coordenador |
+| `GET` | `/api/rooms/{roomId}` | Monitor ou coordenador |
+| `PATCH` | `/api/rooms/{roomId}/status` | Monitor ou coordenador |
 
-Consulte a especificação OpenAPI para schemas, respostas e exemplos.
+O login bloqueia temporariamente novas tentativas após 10 falhas em 15 minutos para o nome de usuário. Consulte o OpenAPI para payloads e respostas.
 
-## Validação
+## Testes
 
 ```bash
 npm test
@@ -58,12 +106,10 @@ npm run lint
 npm run build
 ```
 
-Os testes usam o runner nativo `node:test` e não exigem serviços externos.
-
-## Evolução do projeto
+## Histórico do projeto
 
 - **TED 1:** planejamento inicial.
-- **TED 2:** interface responsiva, mapa de salas e interações com estado simulado no navegador.
-- **TED 3:** API, regras de negócio, persistência e integração com o dashboard.
+- **TED 2:** interface responsiva, mapa e interação com dados simulados.
+- **TED 3:** API, mapa interativo, estados simplificados, autenticação, autorização, PostgreSQL e atualização periódica compartilhada.
 
-O documento formal da TED 1 não estava presente no repositório recebido. Essa limitação e as informações anteriores disponíveis foram registradas no documento técnico da TED 3.
+O README anterior da TED 2 foi a referência disponível para a evolução; o documento formal da TED 1 não estava no repositório.

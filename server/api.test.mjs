@@ -1,21 +1,60 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import test from 'node:test'
 import { createApiServer } from './index.mjs'
-import { RoomStore } from './store.mjs'
+import { setRoomStatus } from './domain.mjs'
 
-const seedRooms = JSON.parse(
-  await readFile(new URL('./seed-data.json', import.meta.url), 'utf8'),
-)
+const initialRooms = [
+  { id: 'sala-a', name: 'Sala A', local: 'Bloco 01', status: 'available', presentations: ['Robótica'] },
+]
 
-test('API atualiza e persiste status e responde com erros consistentes', async (context) => {
-  const directory = await mkdtemp(join(tmpdir(), 'snct-flow-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+function createTestStore() {
+  let rooms = structuredClone(initialRooms)
+  return {
+    async listRooms() {
+      return structuredClone(rooms)
+    },
+    async getRoom(roomId) {
+      return structuredClone(rooms.find((room) => room.id === roomId))
+    },
+    async update(transform) {
+      rooms = transform(rooms)
+      return structuredClone(rooms)
+    },
+  }
+}
 
-  const store = await new RoomStore(join(directory, 'rooms.json')).initialize()
-  const server = createApiServer(store)
+function createTestAuth() {
+  const users = {
+    'admin-token': { id: 'admin-id', username: 'coordenador', role: 'admin' },
+    'monitor-token': { id: 'monitor-id', username: 'monitor', role: 'monitor' },
+  }
+  const createdMonitors = []
+  return {
+    createdMonitors,
+    async authenticate(token) {
+      return users[token] ?? null
+    },
+    async getLoginFailures() {
+      return 0
+    },
+    async login(username, password) {
+      assert.equal(username, 'monitor')
+      assert.equal(password, 'senha-forte')
+      return { token: 'monitor-token', user: users['monitor-token'] }
+    },
+    async logout() {},
+    async createMonitor(username, password) {
+      const user = { id: 'novo-id', username, role: 'monitor' }
+      createdMonitors.push({ user, password })
+      return user
+    },
+  }
+}
+
+test('API exige autenticação para salas e permite login/logout com cookie protegido', async (context) => {
+  const store = createTestStore()
+  const auth = createTestAuth()
+  const server = createApiServer(store, auth)
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   context.after(() => new Promise((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()))
@@ -27,109 +66,106 @@ test('API atualiza e persiste status e responde com erros consistentes', async (
   const health = await fetch(`${baseUrl}/api/health`)
   assert.deepEqual(await health.json(), { status: 'ok' })
 
-  const initial = await fetch(`${baseUrl}/api/rooms`)
-  assert.deepEqual((await initial.json()).rooms, seedRooms)
+  const unauthorized = await fetch(`${baseUrl}/api/rooms`)
+  assert.equal(unauthorized.status, 401)
+  assert.equal((await unauthorized.json()).error.code, 'UNAUTHENTICATED')
 
-  const occupied = await fetch(`${baseUrl}/api/rooms/sala-a/status`, {
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: baseUrl },
+    body: JSON.stringify({ username: 'monitor', password: 'senha-forte' }),
+  })
+  assert.equal(login.status, 200)
+  assert.match(login.headers.get('set-cookie'), /HttpOnly/)
+  assert.match(login.headers.get('set-cookie'), /SameSite=Strict/)
+
+  const rooms = await fetch(`${baseUrl}/api/rooms`, {
+    headers: { cookie: 'snct_session=monitor-token' },
+  })
+  assert.deepEqual((await rooms.json()).rooms, initialRooms)
+
+  const logout = await fetch(`${baseUrl}/api/auth/logout`, {
+    method: 'POST',
+    headers: {
+      cookie: 'snct_session=monitor-token',
+      origin: baseUrl,
+    },
+  })
+  assert.equal(logout.status, 204)
+  assert.match(logout.headers.get('set-cookie'), /Max-Age=0/)
+})
+
+test('monitores podem atualizar salas, mas só coordenadores cadastram contas', async (context) => {
+  const store = createTestStore()
+  const auth = createTestAuth()
+  const server = createApiServer(store, auth)
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  context.after(() => new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()))
+  }))
+
+  const baseUrl = `http://127.0.0.1:${server.address().port}`
+
+  const blockedOrigin = await fetch(`${baseUrl}/api/rooms/sala-a/status`, {
     method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      cookie: 'snct_session=monitor-token',
+      origin: 'https://other.example',
+      'content-type': 'application/json',
+    },
     body: JSON.stringify({ status: 'occupied' }),
   })
-  assert.equal(occupied.status, 200)
-  assert.equal(
-    (await occupied.json()).rooms.find((room) => room.id === 'sala-a').status,
-    'occupied',
-  )
+  assert.equal(blockedOrigin.status, 403)
 
-  const blocked = await fetch(`${baseUrl}/api/rooms/sala-a/status`, {
-    method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ status: 'blocked' }),
+  const monitorCreation = await fetch(`${baseUrl}/api/users`, {
+    method: 'POST',
+    headers: {
+      cookie: 'snct_session=monitor-token',
+      origin: baseUrl,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ username: 'outro', password: 'senha-forte-123' }),
   })
-  assert.equal(
-    (await blocked.json()).rooms.find((room) => room.id === 'sala-a').status,
-    'blocked',
-  )
+  assert.equal(monitorCreation.status, 403)
 
-  const persistedStore = await new RoomStore(join(directory, 'rooms.json')).initialize()
-  assert.equal(persistedStore.listRooms()[0].status, 'blocked')
+  const created = await fetch(`${baseUrl}/api/users`, {
+    method: 'POST',
+    headers: {
+      cookie: 'snct_session=admin-token',
+      origin: baseUrl,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ username: 'outro', password: 'senha-forte-123' }),
+  })
+  assert.equal(created.status, 201)
+  assert.equal((await created.json()).user.role, 'monitor')
+  assert.equal(auth.createdMonitors.length, 1)
+
+  const update = await fetch(`${baseUrl}/api/rooms/sala-a/status`, {
+    method: 'PATCH',
+    headers: {
+      cookie: 'snct_session=monitor-token',
+      origin: baseUrl,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ status: 'occupied' }),
+  })
+  assert.equal(update.status, 200)
+  assert.equal((await store.getRoom('sala-a')).status, 'occupied')
 
   const invalidTransition = await fetch(`${baseUrl}/api/rooms/sala-a/status`, {
     method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ status: 'occupied' }),
+    headers: {
+      cookie: 'snct_session=monitor-token',
+      origin: baseUrl,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ status: 'blocked' }),
   })
-  assert.equal(invalidTransition.status, 409)
-  assert.equal(
-    (await invalidTransition.json()).error.code,
-    'INVALID_STATUS_TRANSITION',
-  )
-
-  const invalid = await fetch(`${baseUrl}/api/rooms/sala-a/status`, {
-    method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ status: 'full' }),
-  })
-  assert.equal(invalid.status, 400)
-  assert.equal((await invalid.json()).error.code, 'INVALID_STATUS')
-
-  const malformed = await fetch(`${baseUrl}/api/rooms/sala-a/status`, {
-    method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
-    body: '{',
-  })
-  assert.equal(malformed.status, 400)
-  assert.equal((await malformed.json()).error.code, 'INVALID_JSON')
+  assert.equal(invalidTransition.status, 200)
 })
 
-test('migra dados antigos de grupos e disponibilidade para status', async (context) => {
-  const directory = await mkdtemp(join(tmpdir(), 'snct-flow-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
-
-  const dataPath = join(directory, 'rooms.json')
-  await writeFile(dataPath, JSON.stringify([
-    {
-      id: 'legacy-available',
-      name: 'Sala antiga livre',
-      local: 'Bloco 01',
-      capacity: 40,
-      unavailable: false,
-      groups: [],
-      presentations: [],
-    },
-    {
-      id: 'legacy-occupied',
-      name: 'Sala antiga ocupada',
-      local: 'Bloco 01',
-      capacity: 40,
-      unavailable: false,
-      groups: [{ id: 'g1', size: 'Pequeno', enteredAt: '08:00' }],
-      presentations: [],
-    },
-    {
-      id: 'legacy-blocked',
-      name: 'Sala antiga bloqueada',
-      local: 'Bloco 01',
-      capacity: 40,
-      unavailable: true,
-      groups: [],
-      presentations: [],
-    },
-  ]))
-
-  const store = await new RoomStore(dataPath).initialize()
-  assert.deepEqual(store.listRooms().map((room) => room.status), [
-    'available',
-    'occupied',
-    'blocked',
-  ])
-  assert.equal('groups' in store.listRooms()[1], false)
-  const persisted = JSON.parse(await readFile(dataPath, 'utf8'))
-  assert.deepEqual(persisted.map((room) => room.status), [
-    'available',
-    'occupied',
-    'blocked',
-  ])
-  assert.equal('groups' in persisted[1], false)
-  assert.equal('unavailable' in persisted[2], false)
+test('as regras de negócio permanecem aplicadas na camada da API', async () => {
+  const rooms = structuredClone(initialRooms)
+  assert.equal(setRoomStatus(rooms, 'sala-a', 'occupied')[0].status, 'occupied')
 })

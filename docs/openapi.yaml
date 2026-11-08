@@ -2,9 +2,12 @@ openapi: 3.0.3
 info:
   title: SNCT Flow API
   version: 1.0.0
-  description: API local para consulta de salas e registro de movimentações.
+  description: API do SNCT Flow para autenticação, gerenciamento de contas e atualização compartilhada do estado das salas.
 servers:
+  - url: /
+    description: Mesma origem da aplicação (produção)
   - url: http://127.0.0.1:3001
+    description: API local em desenvolvimento
 paths:
   /api/health:
     get:
@@ -21,9 +24,113 @@ paths:
                     type: string
                     example: ok
                 required: [status]
+  /api/auth/login:
+    post:
+      summary: Autentica monitor ou coordenador
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                  format: password
+              required: [username, password]
+      responses:
+        '200':
+          description: Login concluído; sessão enviada em cookie HttpOnly
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+                required: [user]
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+  /api/auth/me:
+    get:
+      summary: Retorna a identidade da sessão atual
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Usuário autenticado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+                required: [user]
+        '401':
+          $ref: '#/components/responses/Error'
+  /api/auth/logout:
+    post:
+      summary: Encerra a sessão atual, se houver
+      responses:
+        '204':
+          description: Sessão encerrada e cookie removido
+  /api/users:
+    post:
+      summary: Cria conta individual de monitor (coordenador)
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                  minLength: 3
+                  maxLength: 40
+                password:
+                  type: string
+                  format: password
+                  minLength: 12
+                  maxLength: 200
+              required: [username, password]
+      responses:
+        '201':
+          description: Conta criada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+                required: [user]
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
   /api/rooms:
     get:
       summary: Lista as salas
+      security:
+        - sessionCookie: []
       responses:
         '200':
           description: Salas cadastradas
@@ -37,11 +144,15 @@ paths:
                     items:
                       $ref: '#/components/schemas/Room'
                 required: [rooms]
+        '401':
+          $ref: '#/components/responses/Error'
   /api/rooms/{roomId}:
     parameters:
       - $ref: '#/components/parameters/RoomId'
     get:
       summary: Consulta uma sala
+      security:
+        - sessionCookie: []
       responses:
         '200':
           description: Sala encontrada
@@ -55,11 +166,15 @@ paths:
                 required: [room]
         '404':
           $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
   /api/rooms/{roomId}/status:
     parameters:
       - $ref: '#/components/parameters/RoomId'
     patch:
       summary: Registra entrada, saída, bloqueio ou liberação da sala
+      security:
+        - sessionCookie: []
       description: >-
         Entrada muda uma sala available para occupied; saída muda occupied para
         available. Bloqueio muda available ou occupied para blocked; desbloqueio
@@ -83,6 +198,8 @@ paths:
                 $ref: '#/components/schemas/RoomsResponse'
         '400':
           $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
         '409':
@@ -97,6 +214,18 @@ components:
         type: string
       example: sala-a
   schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        role:
+          type: string
+          enum: [admin, monitor]
+      required: [id, username, role]
     RoomStatus:
       type: string
       enum: [available, occupied, blocked]
@@ -143,3 +272,8 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: snct_session

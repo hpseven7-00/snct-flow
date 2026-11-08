@@ -5,13 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "api": "node server/index.mjs",
+    "api": "node --env-file-if-exists=.env server/index.mjs",
+    "start": "node --env-file-if-exists=.env server/index.mjs",
+    "create-admin": "node --env-file-if-exists=.env server/create-admin.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "node --test",
     "preview": "vite preview"
   },
   "dependencies": {
+    "pg": "^8.16.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
