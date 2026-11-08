@@ -5,6 +5,7 @@
 - **Projeto:** SNCT Flow
 - **Versão deste documento:** 3.2
 - **Data:** 8 de novembro de 2026
+- **Link do Repositório:** https://github.com/hpseven7-00/snct-flow
 - **Finalidade:** registrar a implementação do back-end e sua integração com o MVP de gestão da ocupação de salas da Semana Nacional de Ciência e Tecnologia.
 
 > **Histórico das TEDs anteriores:** a TED 2 é a referência adotada para esta evolução. O README existente registra seu objetivo, funcionalidades e tecnologias; esse conteúdo foi preservado e consolidado neste documento. O planejamento formal da TED 1 não está disponível no repositório e não foi usado para presumir requisitos além dos registrados na TED 2.
